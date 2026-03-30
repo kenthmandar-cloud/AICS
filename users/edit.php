@@ -2,118 +2,128 @@
 require '../includes/header.php';
 require '../config/db.php';
 
-$error = '';
-$id = $_GET['id'] ?? null;
-
-if (!$id) {
-    header("Location: index.php");
-    exit;
+if ($_SESSION['user']['role'] !== 'admin') {
+    header("Location: /aics/index.php"); exit;
 }
 
-$user = $pdo->prepare("SELECT * FROM users WHERE id = ?");
-$user->execute([$id]);
-$user = $user->fetch();
+$id = (int)($_GET['id'] ?? 0);
+if (!$id) { header("Location: index.php"); exit; }
 
-if (!$user) {
-    header("Location: index.php");
-    exit;
-}
+$stmt = $pdo->prepare("SELECT * FROM users WHERE id=?");
+$stmt->execute([$id]);
+$user = $stmt->fetch();
+if (!$user) { header("Location: index.php"); exit; }
+
+$errors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $full_name = trim($_POST['full_name']);
-    $username  = trim($_POST['username']);
-    $password  = trim($_POST['password']);
-    $role      = $_POST['role'];
+    $full_name = trim($_POST['full_name'] ?? '');
+    $username  = $user['username'] === 'admin' ? 'admin' : trim($_POST['username'] ?? '');
+    $password  = trim($_POST['password'] ?? '');
+    $role      = $_POST['role'] ?? 'encoder';
     $is_active = isset($_POST['is_active']) ? 1 : 0;
 
-    if (empty($full_name) || empty($username) || empty($password)) {
-        $error = "All fields are required.";
-    } else {
-        // Check username conflict (exclude current user)
-        $check = $pdo->prepare("SELECT id FROM users WHERE username = ? AND id != ?");
-        $check->execute([$username, $id]);
-        if ($check->fetch()) {
-            $error = "Username already taken by another user.";
-        } else {
-            $stmt = $pdo->prepare("UPDATE users SET full_name=?, username=?, password=?, role=?, is_active=? WHERE id=?");
-            $stmt->execute([$full_name, $username, $password, $role, $is_active, $id]);
-            header("Location: index.php?success=1");
-            exit;
-        }
+    if (empty($full_name)) $errors[] = "Full name is required.";
+    if (empty($username))  $errors[] = "Username is required.";
+    if (empty($password))  $errors[] = "Password is required.";
+
+    if (empty($errors) && $user['username'] !== 'admin') {
+        $chk = $pdo->prepare("SELECT id FROM users WHERE username=? AND id!=?");
+        $chk->execute([$username,$id]);
+        if ($chk->fetch()) $errors[] = "Username '$username' is already taken.";
     }
+
+    if (empty($errors)) {
+        $pdo->prepare("UPDATE users SET full_name=?,username=?,password=?,role=?,is_active=? WHERE id=?")
+            ->execute([$full_name,$username,$password,$role,$is_active,$id]);
+        header("Location: index.php?success=1"); exit;
+    }
+
+    // Repopulate
+    $user = array_merge($user, compact('full_name','username','password','role','is_active'));
 }
 ?>
 
-<div class="max-w-lg mx-auto">
-  <div class="flex items-center gap-3 mb-6">
-    <a href="index.php" class="text-blue-600 hover:underline text-sm">← Back to Users</a>
-    <h2 class="text-xl font-bold text-gray-800">Edit User</h2>
-  </div>
+<div class="breadcrumb">
+  <a href="index.php">Users</a>
+  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+  <span>Edit User</span>
+</div>
 
-  <?php if ($error): ?>
-    <div class="bg-red-50 text-red-700 text-sm rounded-lg px-4 py-2 mb-4"><?= $error ?></div>
+<div style="max-width:600px">
+  <?php if (!empty($errors)): ?>
+  <div class="alert alert-danger">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    <div><?php foreach ($errors as $e): ?><div><?= htmlspecialchars($e) ?></div><?php endforeach; ?></div>
+  </div>
   <?php endif; ?>
 
-  <form method="POST" class="bg-white rounded-2xl shadow p-6 space-y-4">
-
-    <div>
-      <label class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-      <input type="text" name="full_name"
-        value="<?= htmlspecialchars($_POST['full_name'] ?? $user['full_name']) ?>"
-        required
-        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+  <div class="card">
+    <div class="card-header">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="avatar" style="width:42px;height:42px;font-size:16px">
+          <?= strtoupper(substr($user['full_name'],0,1)) ?>
+        </div>
+        <div>
+          <div class="card-title"><?= htmlspecialchars($user['full_name']) ?></div>
+          <div class="card-subtitle">@<?= htmlspecialchars($user['username']) ?> &bull; <?= ucfirst($user['role']) ?></div>
+        </div>
+      </div>
     </div>
+    <div class="card-body">
+      <form method="POST">
+        <div class="form-group">
+          <label class="form-label">Full Name <span class="required">*</span></label>
+          <input type="text" name="full_name" class="form-control" required
+                 value="<?= htmlspecialchars($user['full_name']) ?>">
+        </div>
 
-    <div>
-      <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
-      <input type="text" name="username"
-        value="<?= htmlspecialchars($_POST['username'] ?? $user['username']) ?>"
-        required
-        <?= $user['username'] === 'admin' ? 'readonly class="w-full border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-400"' : 'class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"' ?>>
-      <?php if ($user['username'] === 'admin'): ?>
-        <p class="text-xs text-gray-400 mt-1">Admin username cannot be changed.</p>
-      <?php endif; ?>
-    </div>
+        <div class="form-row cols-2">
+          <div class="form-group">
+            <label class="form-label">Username <span class="required">*</span></label>
+            <?php if ($user['username'] === 'admin'): ?>
+              <input type="text" class="form-control" value="admin" readonly>
+              <div class="form-hint">Admin username cannot be changed</div>
+            <?php else: ?>
+              <input type="text" name="username" class="form-control" required
+                     value="<?= htmlspecialchars($user['username']) ?>">
+            <?php endif; ?>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password <span class="required">*</span></label>
+            <input type="text" name="password" class="form-control" required
+                   value="<?= htmlspecialchars($user['password']) ?>">
+          </div>
+        </div>
 
-    <div>
-      <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
-      <input type="text" name="password"
-        value="<?= htmlspecialchars($_POST['password'] ?? $user['password']) ?>"
-        required
-        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-    </div>
+        <div class="form-group">
+          <label class="form-label">Role</label>
+          <select name="role" class="form-control">
+            <option value="encoder" <?= $user['role']==='encoder'?'selected':'' ?>>Encoder — Can add and edit records</option>
+            <option value="admin"   <?= $user['role']==='admin'?'selected':'' ?>>Admin — Full system access</option>
+            <option value="viewer"  <?= $user['role']==='viewer'?'selected':'' ?>>Viewer — Read-only access</option>
+          </select>
+        </div>
 
-    <div>
-      <label class="block text-sm font-medium text-gray-700 mb-1">Role</label>
-      <select name="role"
-        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-        <?php
-          $current_role = $_POST['role'] ?? $user['role'];
-          foreach (['encoder','admin','viewer'] as $r):
-        ?>
-          <option value="<?= $r ?>" <?= $current_role === $r ? 'selected' : '' ?>><?= ucfirst($r) ?></option>
-        <?php endforeach; ?>
-      </select>
-    </div>
+        <div class="form-check">
+          <input type="checkbox" name="is_active" id="is_active" value="1"
+                 <?= $user['is_active'] ? 'checked' : '' ?>>
+          <div>
+            <label class="form-check-label" for="is_active">Active Account</label>
+            <div class="form-check-hint">User can log in when active</div>
+          </div>
+        </div>
 
-    <div class="flex items-center gap-2">
-      <input type="checkbox" name="is_active" id="is_active" value="1"
-        <?= (($_POST['is_active'] ?? $user['is_active']) ? 'checked' : '') ?>
-        class="w-4 h-4 accent-blue-600">
-      <label for="is_active" class="text-sm text-gray-700">Active</label>
+        <div style="display:flex;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+          <button type="submit" class="btn btn-primary btn-lg" style="flex:1">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+            Update User
+          </button>
+          <a href="index.php" class="btn btn-secondary btn-lg" style="flex:1;justify-content:center">Cancel</a>
+        </div>
+      </form>
     </div>
-
-    <div class="pt-2 flex gap-3">
-      <button type="submit"
-        class="bg-blue-700 hover:bg-blue-800 text-white px-6 py-2 rounded-lg text-sm font-semibold transition">
-        Update User
-      </button>
-      <a href="index.php"
-        class="px-6 py-2 rounded-lg border text-sm text-gray-600 hover:bg-gray-50 transition">
-        Cancel
-      </a>
-    </div>
-  </form>
+  </div>
 </div>
 
 <?php require '../includes/footer.php'; ?>
